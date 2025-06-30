@@ -1,0 +1,793 @@
+---
+title: "Streaming Service : EDA and Hypothesis Testing"
+author: 
+  - name: "Eliane & Joyeuse"
+    affiliation: "Junior Data Analysts"
+date: "2025-06-29"
+
+format:
+  revealjs:
+    height: 1100
+    width: 1200
+    theme: simple
+    transition: slide
+    slide-number: true
+    center: true
+    toc: false
+    code-fold: true
+    code-tools: true
+    code-block-bg: true
+    code-block-border-left: "#31BAE9"
+    css: |
+      /* General slide font size */
+      .reveal .slides section {
+        font-size: 0.8em !important;
+      }
+
+      /* Title slide styling */
+      .reveal .title-slide h1 {
+        font-size: 1.8em !important;
+      }
+
+      .reveal .title-slide .author {
+        font-size: 1.1em !important;
+      }
+
+      .reveal .title-slide .affiliation {
+        font-size: 1em !important;
+      }
+
+      .reveal .title-slide .date {
+        font-size: 0.9em !important;
+      }
+
+jupyter: python3
+---
+
+## Introduction
+This project analyzes user behavior from a streaming service dataset to improve engagement, satisfaction, and retention. It explores user demographics, subscription details, viewing habits, and engagement metrics. The analysis includes both exploratory and hypothesis-driven methods to uncover trends in content consumption and platform interaction. Insights will guide decisions in product development, personalization, and loyalty strategies.
+
+```{python}
+#| echo: false
+#| output: false
+# import Libraries
+import pandas as pd
+import numpy as np
+import os
+import plotly.express as px
+import statsmodels.api as sm
+from scipy import stats
+```
+
+```{python}
+#| echo: false
+# Get working directory
+current_dir=os.getcwd()
+
+# Go one directory up to root directory
+project_root_dir=os.path.dirname(current_dir)
+
+# Define paths to the data folders
+data_dir=os.path.join(project_root_dir,'data')
+raw_dir=os.path.join(data_dir,'raw')
+processed_dir=os.path.join(data_dir,'processed')
+
+# Define paths to results folders
+result_dir=os.path.join(project_root_dir,'results')
+
+# Define paths to Docs folder
+docs_dir=os.path.join(project_root_dir,'docs')
+
+# Create a directories if they do not exists
+
+os.makedirs(raw_dir,exist_ok=True)
+os.makedirs(processed_dir,exist_ok=True)
+os.makedirs(result_dir,exist_ok=True)
+os.makedirs(docs_dir,exist_ok=True)
+```
+
+```{python}
+#| echo: false
+#| output: false
+stream_data_filename=os.path.join(processed_dir,"cleaned_stream_data.csv")
+stream_df=pd.read_csv(stream_data_filename)
+stream_df.head()
+```
+
+
+## EDA Summary
+
+
+- **High Engagement**: Users average **254 watch hours**, with wide individual differences.
+- **Heavy Content Use**: Average of **516 movies** and **100 series** watched per user.
+- **Device Usage**: Majority use **3+ devices**, mostly starting on **tablets**.
+- **Demographics**: Largest segments are **USA-based**, **Mandarin-speaking**, and aged **45–54**.
+- **Loyalty & Ratings**: Mean **loyalty score** is **2,444**; average **rating** is **4.01/5**.
+- **Viewing Habits**: Most users prefer **late-night viewing**, **Horror content**, and fall in the **301–500 watch hour** range.
+This EDA helped us understand key trends, user behavior, and data structure — forming the basis for further hypothesis testing and recommendations.
+
+# Key insights
+
+## Monthly Revenue Comparison 
+This chart displays the total monthly revenue ($) generated over the years 2022, 2023, and 2024, helping to visualize revenue trends, seasonal patterns, and year-over-year performance.
+
+```{python}
+#| echo: false
+#| output: false
+stream_df['Join_Date'] = pd.to_datetime(stream_df['Join_Date'])
+stream_df['YearMonth'] = stream_df['Join_Date'].dt.to_period('M').astype(str)
+```
+
+```{python}
+#| echo: false
+#| output: false
+monthly_revenue = (
+    stream_df.groupby('YearMonth')['Monthly_Price']
+    .sum()
+    .reset_index()
+    .rename(columns={'Monthly_Price': 'Total_Revenue'})
+)
+```
+
+```{python}
+#| echo: false
+#| output: false
+stream_df['Join_Date'] = pd.to_datetime(stream_df['Join_Date'])
+
+stream_df['Year'] = stream_df['Join_Date'].dt.year
+stream_df['Month'] = stream_df['Join_Date'].dt.strftime('%b')  
+
+month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+monthly_revenue = stream_df.groupby(['Year', 'Month'])['Monthly_Price'].sum().reset_index()
+monthly_revenue.rename(columns={'Monthly_Price': 'Total_Revenue'}, inplace=True)
+
+monthly_revenue['Month'] = pd.Categorical(monthly_revenue['Month'], categories=month_order, ordered=True)
+monthly_revenue = monthly_revenue.sort_values(['Year', 'Month'])
+```
+
+```{python}
+#| echo: false
+#| output: true
+fig = px.line(
+    monthly_revenue,
+    x='Month',
+    y='Total_Revenue',
+    color='Year',
+    markers=True,
+    title='Monthly Revenue Comparison: 2022 vs 2023 vs 2024',
+    category_orders={'Month': month_order},  
+    template='presentation',
+    line_shape='linear'
+)
+
+fig.update_layout(
+    xaxis_title='Month',
+    yaxis_title='Total Revenue ($)',
+    legend_title_text='Year',
+    height=650,
+    width=1100,
+    paper_bgcolor='rgba(0,0,0,0)',
+    plot_bgcolor='rgba(0,0,0,0)',
+    margin=dict(l=60, r=40, t=80, b=80)
+)
+
+fig.show()
+
+fig.write_image(os.path.join(result_dir, 'Monthly_Revenue_Comparison_Line_Chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Monthly_Revenue_Comparison_Line_Chart.png'))
+fig.write_html(os.path.join(result_dir, 'Monthly_Revenue_Comparison_Line_Chart.html'))
+```
+
+## Watch Hours by Age Category
+
+```{python}
+#| echo: false
+#| output: false
+# Count and proportion of Age_Category
+age_counts = stream_df['Age_Category'].value_counts().reset_index()
+age_counts.columns = ['Age_Category', 'Count'] 
+age_props = stream_df['Age_Category'].value_counts(normalize=True).reset_index()
+print(age_counts)
+print(age_props)
+
+# Summary stats of Watch_Hours by Age_Category
+watch_hours_summary = stream_df.groupby('Age_Category')['Watch_Hours'].describe()
+print(watch_hours_summary)
+
+# Count of Favorite_Genre by Age_Category
+genre_counts = pd.crosstab(stream_df['Age_Category'], stream_df['Favorite_Genre'])
+print(genre_counts)
+```
+
+```{python}
+#| echo: false
+#| output: true
+age_category_counts = stream_df["Age_Category"].value_counts().reset_index()
+age_category_counts.columns = ["Age_Category", "User_Count"]
+
+fig = px.pie(
+    age_category_counts,
+    names="Age_Category",
+    values="User_Count",
+    title="Viewer Age Category Distribution",
+    hole=0.4,
+    color_discrete_sequence=px.colors.sequential.Blues_r
+)
+
+fig.update_layout(
+    template="presentation",
+    height=400,
+    width=600,
+    legend_title=dict(text="Age Categories"),
+    paper_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.show()
+fig.write_image(os.path.join(result_dir, 'Age_Category_Distribution_Pie_Chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Age_Category_Distribution_Pie_Chart.png'))
+fig.write_html(os.path.join(result_dir, 'Age_Category_Distribution_Pie_Chart.html'))
+```
+The user base is fairly evenly spread across age categories, with a slight dominance of **older and mature streamers**. This suggests the platform appeals strongly to middle-aged and senior users, which can guide content curation and marketing strategies to better target these segments.
+
+
+## Favorite genre by Country
+
+```{python}
+#| echo: false
+#| output: false
+Favorite_genre_country = stream_df.groupby(['Country', 'Favorite_Genre']).size().reset_index(name='total').sort_values(by='total', ascending=False)
+Favorite_genre_country.index=['']*len(Favorite_genre_country)
+# Favorite_genre_country
+```
+
+```{python}
+#| echo: false
+#| output: true
+fig = px.bar(
+    Favorite_genre_country,
+    x='Country',
+    y='total',
+    color='Favorite_Genre',
+    barmode='group',
+    title='Genre Preference by Country',
+    text='total',
+    color_discrete_sequence=px.colors.sequential.Blues_r,
+    height=600,
+    width=1000
+)
+
+fig.update_layout(
+    xaxis_title='Country',
+    yaxis_title='User Count',
+    legend_title='Favorite Genre',
+    template='presentation',
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+)
+
+fig.update_traces(
+    texttemplate='%{text:.0f}',
+    textposition='outside'
+)
+
+fig.show()
+fig.write_image(os.path.join(result_dir, 'Favorite_genre_by_country_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Favorite_genre_by_country_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Favorite_genre_by_country_Bar_chart.html'))
+```
+Viewing preferences vary notably across countries:
+- **Horror is especially popular** in France and Australia.
+- **Drama leads in the USA and Germany**.
+- **Comedy is favored in the UK and Canada**.
+- Other countries show diverse tastes across genres.
+These regional differences highlight opportunities to **customize content and marketing strategies** to better match local user interests.
+
+
+## Payment method distribution
+
+```{python}
+#| echo: false
+#| output: false
+pay_trends = stream_df.groupby('Payment_Method')[['Monthly_Price', 'Loyalty_Points']].mean().round(2).reset_index()
+
+pay_trends['Monthly_Price_percentage'] = (pay_trends['Monthly_Price'] / pay_trends['Monthly_Price'].sum() * 100).round(2)
+pay_trends['Loyalty_Points_percentage'] = (pay_trends['Loyalty_Points'] / pay_trends['Loyalty_Points'].sum() * 100).round(2)
+pay_trends.index=['']*len(pay_trends)
+pay_trends
+```
+
+```{python}
+#| echo: false
+#| output: true
+paypal = ['PayPal']
+others = pay_trends[pay_trends['Payment_Method'] != 'PayPal'].sort_values(
+    'Monthly_Price_percentage', ascending=False)['Payment_Method'].tolist()
+custom_order = paypal + others
+
+pay_trends['Payment_Method'] = pd.Categorical(
+    pay_trends['Payment_Method'], categories=custom_order, ordered=True)
+
+melted = pay_trends.melt(
+    id_vars='Payment_Method',
+    value_vars=['Monthly_Price_percentage', 'Loyalty_Points_percentage'],
+    var_name='Metric',
+    value_name='Percentage'
+)
+
+# Create the bar chart
+fig = px.bar(
+    melted,
+    x='Payment_Method',
+    y='Percentage',
+    color='Metric',
+    barmode='group',
+    title="Payment Method Trends",
+    text='Percentage',
+    color_discrete_sequence=px.colors.sequential.Blues_r,
+    height=600,
+    width=700
+)
+
+fig.update_traces(
+    texttemplate='%{text:.1f}%',
+    textposition='inside',
+    marker_line_width=0
+)
+
+# Update layout
+fig.update_layout(
+    xaxis_title="Payment Method",
+    yaxis_title="Percentage (%)",
+    template="presentation",
+    showlegend=True,
+    legend_title_text="Metric",
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(
+        tickfont=dict(size=14),
+        tickangle=0
+    ),
+    yaxis=dict(
+        tickfont=dict(size=12)
+    ),
+    legend=dict(
+        font=dict(size=12)
+    )
+)
+
+fig.show()
+
+fig.write_image(os.path.join(result_dir, 'Payment_Method_Trends_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Payment_Method_Trends_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Payment_Method_Trends_Bar_chart.html'))
+```
+Users paying via **Cryptocurrency** tend to have slightly higher subscription fees and earn similar loyalty points compared to other groups. Meanwhile, **PayPal users**, despite paying a bit less on average, accumulate the **highest loyalty points**, suggesting strong engagement and retention within this payment group.
+
+
+## Device behavior analysis
+
+```{python}
+#| echo: false
+#| output: false
+device_watch = (
+    stream_df.groupby('First_Device_Used')['Watch_Hours']
+    .mean()
+    .round(2)
+    .reset_index(name='Average_Watch_Hours')
+    .sort_values(by='Average_Watch_Hours', ascending=False)
+)
+device_watch.index=['']*len(device_watch)
+device_watch
+```
+
+```{python}
+#| echo: false
+#| output: true
+fig = px.bar(
+    device_watch,
+    x='First_Device_Used',
+    y='Average_Watch_Hours',
+    title='Device Watching Hours',
+    text='Average_Watch_Hours',
+    color_discrete_sequence=['#1f77b4'],
+    height=500,
+    width=800
+)
+
+fig.update_layout(
+    xaxis_title='Device Used',
+    yaxis_title='Average Watch Hours',
+    template='presentation',
+    showlegend=False,
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.update_traces(
+    texttemplate='%{text:.2f}',
+    textposition='inside',
+    textfont_color='white',
+    marker_opacity=0.7
+)
+
+fig.update_xaxes(tickangle=0, automargin=True)
+
+fig.show()
+
+fig.write_image(os.path.join(result_dir, 'Device_watching_Hours_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Device_watching_Hours_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Device_watching_Hours_Bar_chart.html'))
+```
+
+Users who first accessed the service on **smartphones** watch the most content on average, followed closely by desktop and smart TV users. Tablet and laptop users tend to watch less, suggesting that initial device choice may influence engagement levels.
+
+
+## Device usage disribution
+
+```{python}
+#| echo: false
+#| output: true
+device_counts = stream_df["First_Device_Used"].value_counts().reset_index()
+device_counts.columns = ["Device", "Count"]
+
+fig = px.bar(
+    device_counts,
+    x="Device",
+    y="Count",
+    title="Device Usage Distribution",
+    text="Count",
+    color_discrete_sequence=['#1f77b4'],
+    height=500,
+    width=800
+)
+
+fig.update_traces(
+    texttemplate="%{text}",
+    textposition="inside",
+    textfont_color="white",
+    marker_opacity=0.7
+)
+
+fig.update_layout(
+    xaxis_title="Device Used",
+    yaxis_title="User Count",
+    template="presentation",
+    showlegend=False,
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.update_xaxes(tickangle=0, automargin=True)
+
+fig.show()
+
+
+fig.write_image(os.path.join(result_dir, 'Device_Usage_Distribution_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Device_Usage_Distribution_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Device_Usage_Distribution_Bar_chart.html'))
+```
+
+Most of the users or viewers like to use **Tablets** followed by **Smartphone**
+
+## Watching hours per day
+
+```{python}
+#| echo: false
+#| output: false
+time_watch = (
+    stream_df.groupby('Primary_Watch_Time')['Watch_Hours']
+    .mean()
+    .round(2)
+    .reset_index(name='Average_Watch_Hours')
+    .sort_values(by='Average_Watch_Hours', ascending=False)
+)
+time_watch.index=['']*len(time_watch)
+time_watch
+```
+
+```{python}
+#| echo: false
+#| output: true
+time_watch = (
+    stream_df.groupby('Primary_Watch_Time')['Watch_Hours']
+    .mean()
+    .round(2)
+    .reset_index(name='Average_Watch_Hours')
+    .sort_values(by='Average_Watch_Hours', ascending=False)
+)
+
+
+fig = px.bar(
+    time_watch,
+    x='Primary_Watch_Time',
+    y='Average_Watch_Hours',
+    title='Watch Hours per Day',
+    text='Average_Watch_Hours',
+    color_discrete_sequence=['#1f77b4'],
+    height=500,
+    width=800
+)
+
+fig.update_traces(
+    texttemplate='%{text}',
+    textposition='outside'
+)
+
+fig.update_layout(
+    template="presentation",
+    xaxis_title="Time of Day",
+    yaxis_title="Average Watch Hours",
+    xaxis_title_standoff=50,
+    legend_title_text=None,
+    showlegend=False,
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+
+fig.show()
+
+
+fig.write_image(os.path.join(result_dir, 'Watch_Hours_per_Day_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Watch_Hours_per_Day_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Watch_Hours_per_Day_Bar_chart.html'))
+```
+
+Users watching in the **morning** have the highest average watch hours, followed by those watching in the **evening**. This suggests these times are peak periods for user engagement.
+
+
+## Preffered watching time
+
+```{python}
+#| echo: false
+#| output: true
+watch_time = stream_df["Primary_Watch_Time"].value_counts().reset_index()
+watch_time.columns = ["Primary_Watch_Time", "User_Count"]
+
+fig = px.bar(
+    watch_time,
+    x="Primary_Watch_Time",
+    y="User_Count",
+    title="Preferred Watching Time",
+    text="User_Count",
+    color_discrete_sequence=['#1f77b4'], 
+    height=500,
+    width=800
+)
+
+fig.update_traces(texttemplate="%{text}", textposition="outside")
+
+fig.update_layout(
+    template="presentation",
+    xaxis_title="Watching Time",
+    yaxis_title="Number of Users",
+    xaxis_title_standoff=50,
+    legend_title_text=None,
+    showlegend=False,
+    margin=dict(l=60, r=40, t=80, b=80),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.show()
+
+
+fig.write_image(os.path.join(result_dir, 'Preferred_Watching_Time_Bar_chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Preferred_Watching_Time_Bar_chart.png'))
+fig.write_html(os.path.join(result_dir, 'Preferred_Watching_Time_Bar_chart.html'))
+```
+
+Most users prefer watching content **late at night** (271 viewers), followed by the **evening**. Fewer users watch during the **afternoon** and **morning**, indicating peak engagement happens later in the day.
+
+
+## Genre ratings
+
+```{python}
+#| echo: false
+#| output: true
+rating_counts = stream_df.groupby("Favorite_Genre")["Average_Rating_Given"].count().reset_index()
+rating_counts.columns = ["Genre", "Rating_Count"]
+
+avg_rating_genre = stream_df.groupby("Favorite_Genre")["Average_Rating_Given"].mean().reset_index()
+avg_rating_genre.columns = ["Genre", "Average_Rating"]
+
+combined = avg_rating_genre.merge(rating_counts, on="Genre")
+
+fig = px.scatter(
+    combined,
+    x="Average_Rating",
+    y="Genre",
+    size="Rating_Count",
+    color="Average_Rating",
+    color_continuous_scale="Blues", 
+    title="Average Rating by Genre with Rating Volume",
+    height=600,
+    width=1200,
+    opacity=0.7  
+)
+
+fig.update_layout(
+    xaxis_title="Average Rating",
+    yaxis_title="Genre",
+    template="presentation",
+    margin=dict(l=60, r=40, t=80, b=80),  
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="rgba(0,0,0,0)"
+)
+
+fig.update_yaxes(tickangle=0, automargin=True)
+
+fig.show()
+
+
+fig.write_image(os.path.join(result_dir, 'Average_Rating_by_Genre_Bubble_Chart.jpg'))
+fig.write_image(os.path.join(result_dir, 'Average_Rating_by_Genre_Bubble_Chart.png'))
+fig.write_html(os.path.join(result_dir, 'Average_Rating_by_Genre_Bubble_Chart.html'))
+```
+Sci-Fi tops the ratings with an average of 4.03, reflecting strong viewer interest. Romance, Horror, and Drama also enjoy high ratings, while Documentary, Comedy, and Action receive slightly lower scores.
+
+
+## Favorite genres
+
+```{python}
+#| echo: false
+#| output: true
+fav_genre = stream_df["Favorite_Genre"].value_counts().reset_index()
+fav_genre.columns = ["Genre", "Count"]
+fav_genre = fav_genre.sort_values(by="Count", ascending=True)  
+
+fig = px.bar(
+    fav_genre,
+    y="Genre",
+    x="Count",
+    orientation="h",
+    title="Favorite Genre Distribution",
+    text="Count",
+    color_discrete_sequence=['#1f77b4'], 
+    height=600,
+    width=1200
+)
+
+fig.update_traces(texttemplate="%{text}", textposition="outside")
+
+fig.update_layout(
+    template="presentation",
+    xaxis_title="Number of Users",
+    yaxis_title="Genre",
+    xaxis_title_standoff=50,
+    legend_title_text=None,
+    showlegend=False,
+    margin=dict(l=60, r=40, t=80, b=80),
+    yaxis=dict(tickmode='linear'),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.show()
+
+fig.write_image(os.path.join(result_dir, 'Total_Rating_by_Favorite_Genre_Bar_chart_horizontal.jpg'))
+fig.write_image(os.path.join(result_dir, 'Total_Rating_by_Favorite_Genre_Bar_chart_horizontal.png'))
+fig.write_html(os.path.join(result_dir, 'Total_Rating_by_Favorite_Genre_Bar_chart_horizontal.html'))
+```
+
+- **Horror** is the most popular genre with 157 viewers, showing strong engagement.  
+- **Action**, **Comedy**, and **Romance** are also widely favored genres.  
+- **Drama**, **Documentary**, and **Sci-Fi** have fewer viewers but remain part of the diverse content mix.
+
+
+## Language preference by country
+
+```{python}
+#| echo: false
+#| output: false
+lang_country = stream_df.groupby(['Country', 'Language_Preference']).size().reset_index(name='Count')
+
+lang_country
+```
+
+```{python}
+#| echo: false
+#| output: false
+lang_country.describe()
+```
+
+```{python}
+#| echo: false
+#| output: true
+fig = px.treemap(
+    lang_country,
+    path=['Country', 'Language_Preference'],
+    values='Count',
+    title='Language Preference by Country',
+    color='Count',
+    color_continuous_scale='Viridis',
+    height=600,
+    width=1000
+)
+
+
+fig.update_layout(
+    margin=dict(l=50, r=50, t=100, b=50),
+    coloraxis_colorbar=dict(
+        title='Count',
+        thickness=15,
+        len=0.5,
+        yanchor='middle',
+        y=0.5
+    ),
+    paper_bgcolor="rgba(0, 0, 0, 0)",
+    plot_bgcolor="rgba(0, 0, 0, 0)"
+)
+
+fig.show()
+
+
+fig.write_image(os.path.join(result_dir, 'Language_Preference_by_Country.jpg'))
+fig.write_image(os.path.join(result_dir, 'Language_Preference_by_Country.png'))
+fig.write_html(os.path.join(result_dir, 'Language_Preference_by_Country.html'))
+```
+
+English and Mandarin are the most popular languages overall, with the USA and Australia having the highest number of Mandarin speakers. Other languages like French, German, Hindi, and Spanish also have strong representation, showing diverse language preferences across countries.
+
+
+## Scatter Plot: Watch Hours vs. Loyalty Points
+
+This plot shows the relationship between users' watch hours and loyalty points. A linear trendline is added to assess whether users who watch more content tend to earn more loyalty points. The data points are displayed with a clean and modern style.
+
+```{python}
+#| echo: false
+#| output: true
+fig = px.scatter(
+    stream_df,
+    x="Watch_Hours",
+    y="Loyalty_Points",
+    title="Relationship Between Watch Hours and Loyalty Points",
+    labels={"Watch_Hours": "Watch Hours", "Loyalty_Points": "Loyalty Points"},
+    trendline="ols",  # Adds regression line
+    template="presentation",
+    height=400,
+    width=800,
+    color_discrete_sequence=['#3eb489']
+)
+
+fig.update_layout(
+    paper_bgcolor="rgba(0,0,0,0)",
+    margin=dict(l=60, r=40, t=80, b=80),
+    plot_bgcolor="rgba(0,0,0,0)"
+)
+
+fig.show()
+```
+
+## Hypothesis Testing - Key Points
+
+- No significant correlation between **watch hours** and **loyalty points**.  
+- Watch hours are similar across **primary watch times** (morning, afternoon, evening, late night).  
+- Average ratings do not differ significantly by **favorite genre**.  
+- Watch hours do not vary by **first device used**.  
+- No significant association between **country** and **favorite genre**.
+
+---
+
+## Overall Recommendations
+
+- Design loyalty programs that reward **activity quality and frequency**, not just watch hours.  
+- Maintain a **consistent user experience across all devices**.  
+- Focus on providing engaging content **available anytime**, rather than changing user viewing times.  
+- Promote popular content broadly without over-targeting by **genre or country**.
+
+---
+
+## Conclusion
+
+User engagement and preferences are generally consistent across different groups and categories.  
+Efforts should focus on **personalizing content** and **enhancing user experience** to improve satisfaction and platform growth.  
+Statistical tests confirm a stable user behavior profile, guiding data-driven decisions.
+       
